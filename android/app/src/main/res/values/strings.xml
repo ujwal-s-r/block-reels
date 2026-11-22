@@ -1,0 +1,4 @@
+<resources>
+    <string name="app_name">Block Reels</string>
+    <string name="blocker_description">Reads Instagram and YouTube interface labels and layout to block selected buttons and video browsing. Processing stays on this device. Scroll blocking also blocks viewer controls. You can disable this service at any time.</string>
+</resources>
