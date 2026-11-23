@@ -16,6 +16,17 @@ internal fun hasViewerPanel(ids: List<String>): Boolean = ids.any { id ->
     .any { id.contains(it) }
 }
 
+internal fun hasNativeViewerPanel(ids: List<String>): Boolean {
+  val visibleIds = ids.map { it.substringAfterLast('/').lowercase(Locale.ROOT) }
+  return hasViewerPanel(visibleIds) || visibleIds.any {
+    it in listOf("bottom_sheet_container", "bottom_sheet", "bottom_sheet_dialog",
+      "engagement_panel", "engagement_panel_content", "engagement_panel_wrapper")
+  }
+}
+
+internal fun shouldPassThroughPanel(action: ViewerAction, ids: List<String>): Boolean =
+  action == ViewerAction.LOCK && hasNativeViewerPanel(ids)
+
 internal fun isCarouselControl(viewId: String, hasHorizontalActions: Boolean = false): Boolean {
   val id = viewId.substringAfterLast('/').lowercase(Locale.ROOT)
   return !id.startsWith("clips_viewer") && !id.contains("reel_recycler") &&
@@ -25,19 +36,6 @@ internal fun isCarouselControl(viewId: String, hasHorizontalActions: Boolean = f
 internal fun isHorizontalSwipe(deltaX: Float, deltaY: Float): Boolean =
   kotlin.math.abs(deltaX) > kotlin.math.abs(deltaY) * 2
 
-internal fun panelScrollFraction(distance: Float, extent: Int): Float =
-  (kotlin.math.abs(distance) / extent.coerceAtLeast(1)).coerceIn(0.05f, 1f)
-
-internal fun isPanelScrollTarget(ancestorIds: List<String>): Boolean {
-  for (viewId in ancestorIds) {
-    val id = viewId.substringAfterLast('/').lowercase(Locale.ROOT)
-    if (id.startsWith("clips_viewer") || id.contains("reel_recycler") ||
-      id.startsWith("swipeable_tab_view_pager") || id.startsWith("swipeable_nav_view_pager")) { return false }
-    if (id == "bottom_sheet_container" || hasViewerPanel(listOf(id))) { return true }
-  }
-  return false
-}
-
 internal fun seekFraction(x: Float, left: Float, width: Float, rtl: Boolean): Float {
   val fraction = ((x - left) / width.coerceAtLeast(1f)).coerceIn(0f, 1f)
   return if (rtl) 1f - fraction else fraction
@@ -45,7 +43,7 @@ internal fun seekFraction(x: Float, left: Float, width: Float, rtl: Boolean): Fl
 
 internal fun detectVideoScreen(packageName: String, ids: List<String>, hasMessageInput: Boolean): VideoScreen {
   val visibleIds = ids.map { it.substringAfterLast('/').lowercase(Locale.ROOT) }
-  val hasPanel = hasViewerPanel(visibleIds) || "bottom_sheet_container" in visibleIds
+  val hasPanel = hasNativeViewerPanel(visibleIds)
   if (packageName == "com.instagram.android" && visibleIds.any {
       it.startsWith("reel_viewer") || it.startsWith("story_viewer") || it.startsWith("stories_viewer")
     }) {

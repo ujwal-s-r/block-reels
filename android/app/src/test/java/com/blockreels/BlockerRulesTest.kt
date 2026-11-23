@@ -4,25 +4,24 @@ import org.junit.Assert.assertEquals
 import org.junit.Test
 
 class BlockerRulesTest {
-  @Test fun panelScrollStepsFollowFingerDistanceInsteadOfAlwaysPaging() {
-    assertEquals(0.1f, panelScrollFraction(100f, 1000))
-    assertEquals(0.1f, panelScrollFraction(-100f, 1000))
-    assertEquals(0.05f, panelScrollFraction(1f, 1000))
-    assertEquals(1f, panelScrollFraction(2000f, 1000))
-    assertEquals(1f, panelScrollFraction(100f, 0))
-    assertEquals(true, isCarouselControl("com.instagram.android:id/clips_carousel_viewpager"))
-    assertEquals(false, isCarouselControl("com.instagram.android:id/clips_viewer_view_pager"))
-  }
-
-  @Test fun siblingPanelListsAreAllowedButUnderlyingVideoPagersAreNot() {
-    assertEquals(true, isPanelScrollTarget(listOf("recycler_view", "bottom_sheet_container")))
-    assertEquals(true, isPanelScrollTarget(listOf("list", "likes_list")))
-    assertEquals(true, isPanelScrollTarget(listOf("recipients_row", "bottom_sheet_container", "clips_viewer_root")))
-    assertEquals(false, isPanelScrollTarget(listOf("clips_viewer_view_pager", "bottom_sheet_container")))
-    assertEquals(false, isPanelScrollTarget(listOf("recycler_view", "clips_viewer_root", "bottom_sheet_container")))
-    assertEquals(false, isPanelScrollTarget(listOf("reel_recycler", "bottom_sheet_container")))
-    assertEquals(false, isPanelScrollTarget(listOf("list", "swipeable_tab_view_pager", "bottom_sheet_container")))
-    assertEquals(false, isPanelScrollTarget(listOf("recycler_view", "content")))
+  @Test fun viewerPanelsPassTouchesThroughAndClosingRestoresBlocking() {
+    for (viewer in listOf(VideoScreen.REEL, VideoScreen.SHORT)) {
+      val rules = BlockerRules()
+      val action = rules.evaluate(viewer, false, 0, BlockerOptions())
+      for (panel in listOf("direct_share_sheet", "likes_list", "comment_thread_list", "save_to_collection",
+          "bottom_sheet_container", "engagement_panel_content")) {
+        assertEquals(true, shouldPassThroughPanel(action, listOf("com.instagram.android:id/$panel")))
+        val packageName = if (viewer == VideoScreen.REEL) "com.instagram.android" else "com.google.android.youtube"
+        val screen = detectVideoScreen(packageName, listOf(panel), false)
+        assertEquals(VideoScreen.PANEL, screen)
+        assertEquals(ViewerAction.LOCK, rules.evaluate(screen, false, 1, BlockerOptions()))
+        assertEquals(false, shouldPassThroughPanel(action, listOf("clips_viewer_view_pager", "reel_recycler")))
+      }
+      assertEquals(ViewerAction.LOCK, rules.evaluate(viewer, false, 1, BlockerOptions()))
+    }
+    assertEquals(false, shouldPassThroughPanel(ViewerAction.BLOCK, listOf("direct_share_sheet")))
+    assertEquals(false, shouldPassThroughPanel(ViewerAction.NONE, listOf("comment_list")))
+    assertEquals(false, shouldPassThroughPanel(ViewerAction.LOCK, listOf("like_button", "comment_button", "direct_share_button")))
   }
 
   @Test fun horizontalControlsNeverIncludeTheVerticalReelPager() {
