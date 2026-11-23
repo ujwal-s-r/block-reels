@@ -59,6 +59,19 @@ On the phone, test each switch separately: blocked tabs, a Reel opened from a DM
 - `android/app/src/main/java/com/blockreels`: native module, service, and blocking rules.
 - `__tests__` and `android/app/src/test`: UI and native rule tests.
 
+## Release History
+
+Each build replaces the local APK at `android/app/build/outputs/apk/release/app-release.apk`; older APKs are not archived in this repository. Entries describe implementation changes, not guaranteed compatibility with every Instagram/YouTube version.
+
+- **1.4.2 (code 8, current):** Delay fallback tap injection by 50 ms to allow the touch shield's pass-through flag to take effect. Preserve click-first button handling and existing scrolling behavior. Single-tap playback behavior requires device verification.
+- **1.4.1-rollback (code 7):** Restore v1.4 interaction behavior after the v1.5 regression. Restore click-first tap handling and the 100 ms panel scroll interval; remove the per-drag target cache. The higher version code permits an in-place rollback without clearing settings.
+- **1.5 (code 6, withdrawn):** Coordinate-only taps and cached 32 ms panel scroll updates caused reported interaction failures. Reverted; do not distribute this version.
+- **1.4 (code 5):** Add a horizontal-only replay fallback for Instagram's non-scrollable picture carousel. Update panel scrolling during dragging and request proportional scroll amounts on supported Android versions.
+- **1.3 (code 4):** Fit the touch shield around the visible keyboard so Likes search and comment inputs can receive keyboard touches.
+- **1.2 (code 3):** Find Comments, Likes, and Share lists through their panel ancestors; support both swipe axes in Share while excluding the underlying Reel pager.
+- **1.1 (code 2):** Add accessibility-action support for carousel swipes, timeline seeking, and recognized Likes lists.
+- **1.0 (code 1):** Initial Android app with five independent switches, accessibility consent, local settings, and standalone APK export. Pre-versioned patches refined Stories exclusions, DM Reel detection, tap forwarding, and comment/share transition protection.
+
 ## Limitations
 
 Detection depends on the installed Instagram/YouTube version and exposed accessibility labels. Scroll protection filters video gestures and forwards taps. Horizontal swipes use recognized carousel controls or explicit left/right scroll actions; the Instagram `clips_carousel_viewpager` also supports a fixed-Y simulated swipe fallback. Timeline seeking requires an exposed progress action. The shield stays active over viewer panels; scrollable comments, likes, and sharing lists are targeted through their panel ancestors. Share lists support both vertical and horizontal scrolling; the underlying Reel pager is excluded. Panel scrolling updates during dragging, with proportional scroll amounts on Android 15+ when supported by the target app. Older versions or unsupported lists may still move in page-sized steps. Controls without exposed scroll actions may remain blocked. Seeking applies when the drag ends. Drag-to-dismiss, long presses, and double taps are not guaranteed; use the panel's close control or Back. Simulated taps and carousel swipes temporarily release the touch shield and are not a tamper-proof lock.

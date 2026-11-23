@@ -464,12 +464,12 @@ class BlockerService : AccessibilityService(), SharedPreferences.OnSharedPrefere
       return
     }
     val path = Path().apply { moveTo(x, y) }
-    replayGesture(path, 40)
+    replayGesture(path, 40, 50)
   }
 
-  private fun replayGesture(path: Path, duration: Long) {
+  private fun replayGesture(path: Path, duration: Long, startDelay: Long = 0) {
     val tap = GestureDescription.Builder()
-      .addStroke(GestureDescription.StrokeDescription(path, 0, duration)).build()
+      .addStroke(GestureDescription.StrokeDescription(path, startDelay, duration)).build()
     replayingTap = true
     trace("tap=replay-start")
     setOverlaysTouchable(false)
