@@ -25,6 +25,9 @@ internal fun isCarouselControl(viewId: String, hasHorizontalActions: Boolean = f
 internal fun isHorizontalSwipe(deltaX: Float, deltaY: Float): Boolean =
   kotlin.math.abs(deltaX) > kotlin.math.abs(deltaY) * 2
 
+internal fun panelScrollFraction(distance: Float, extent: Int): Float =
+  (kotlin.math.abs(distance) / extent.coerceAtLeast(1)).coerceIn(0.05f, 1f)
+
 internal fun isPanelScrollTarget(ancestorIds: List<String>): Boolean {
   for (viewId in ancestorIds) {
     val id = viewId.substringAfterLast('/').lowercase(Locale.ROOT)

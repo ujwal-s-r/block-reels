@@ -237,6 +237,10 @@ class BlockerService : AccessibilityService(), SharedPreferences.OnSharedPrefere
     var startX = 0f
     var startY = 0f
     var cancelled = false
+    var lastScrollX = 0f
+    var lastScrollY = 0f
+    var lastScrollAt = 0L
+    var panelScrolled = false
     val frame = android.widget.FrameLayout(this).apply {
       setBackgroundColor(if (action == ViewerAction.BLOCK) Color.BLACK else Color.TRANSPARENT)
       isClickable = true
@@ -247,9 +251,25 @@ class BlockerService : AccessibilityService(), SharedPreferences.OnSharedPrefere
               startX = event.rawX
               startY = event.rawY
               cancelled = false
+              panelScrolled = false
+              lastScrollX = startX
+              lastScrollY = startY
+              lastScrollAt = 0L
               gesture.start(startX, startY)
             }
-            MotionEvent.ACTION_MOVE -> gesture.move(event.rawX, event.rawY)
+            MotionEvent.ACTION_MOVE -> {
+              gesture.move(event.rawX, event.rawY)
+              val now = SystemClock.uptimeMillis()
+              val distance = kotlin.math.hypot(event.rawX - lastScrollX, event.rawY - lastScrollY)
+              if (!cancelled && now - lastScrollAt >= 100 && distance > ViewConfiguration.get(this@BlockerService).scaledTouchSlop * 2) {
+                if (forwardPanelScroll(startX, startY, event.rawX, event.rawY, lastScrollX, lastScrollY)) {
+                  panelScrolled = true
+                  lastScrollX = event.rawX
+                  lastScrollY = event.rawY
+                }
+                lastScrollAt = now
+              }
+            }
             MotionEvent.ACTION_POINTER_DOWN, MotionEvent.ACTION_CANCEL -> {
               cancelled = true
               gesture.cancel()
@@ -257,7 +277,7 @@ class BlockerService : AccessibilityService(), SharedPreferences.OnSharedPrefere
             MotionEvent.ACTION_UP -> {
               if (gesture.finish(event.rawX, event.rawY)) {
                 forwardTap(event.rawX, event.rawY)
-              } else if (!cancelled) {
+              } else if (!cancelled && !panelScrolled) {
                 val panelHandled = forwardPanelScroll(startX, startY, event.rawX, event.rawY)
                 if (!panelHandled && isHorizontalSwipe(event.rawX - startX, event.rawY - startY)) {
                   forwardHorizontalControl(startX, startY, event.rawX)
@@ -346,19 +366,33 @@ class BlockerService : AccessibilityService(), SharedPreferences.OnSharedPrefere
         val fallback = if (endX < startX) AccessibilityNodeInfo.ACTION_SCROLL_FORWARD else AccessibilityNodeInfo.ACTION_SCROLL_BACKWARD
         val action = listOf(directional, fallback).firstOrNull { candidate -> node.actionList.any { it.id == candidate } }
         if (action != null && node.performAction(action)) { scheduleRefresh(16); return }
+        if (node.viewIdResourceName.orEmpty().substringAfterLast('/') == "clips_carousel_viewpager") {
+          val inset = ViewConfiguration.get(this).scaledTouchSlop.toFloat()
+          val left = rectangle.left + inset
+          val right = rectangle.right - inset
+          if (left < right && rectangle.height() > inset * 2) {
+            val path = Path().apply {
+              moveTo(startX.coerceIn(left, right), startY.coerceIn(rectangle.top + inset, rectangle.bottom - inset))
+              lineTo(endX.coerceIn(left, right), startY.coerceIn(rectangle.top + inset, rectangle.bottom - inset))
+            }
+            replayGesture(path, 160)
+            return
+          }
+        }
       }
     }
     trace("horizontal=no-supported-control")
   }
 
-  private fun forwardPanelScroll(startX: Float, startY: Float, endX: Float, endY: Float): Boolean {
+  private fun forwardPanelScroll(startX: Float, startY: Float, endX: Float, endY: Float,
+    previousX: Float = startX, previousY: Float = startY): Boolean {
     if (replayingTap || !running) { return false }
     val root = windows.firstOrNull {
       it.type == AccessibilityWindowInfo.TYPE_APPLICATION && (it.isFocused || it.isActive)
     }?.root ?: return false
     if (root.packageName?.toString() !in targets) { return false }
     val horizontal = isHorizontalSwipe(endX - startX, endY - startY)
-    val forward = if (horizontal) endX < startX else endY < startY
+    val forward = if (horizontal) endX < previousX else endY < previousY
     val directional = if (horizontal) {
       if (forward) AccessibilityNodeInfo.AccessibilityAction.ACTION_SCROLL_RIGHT.id
         else AccessibilityNodeInfo.AccessibilityAction.ACTION_SCROLL_LEFT.id
@@ -367,7 +401,7 @@ class BlockerService : AccessibilityService(), SharedPreferences.OnSharedPrefere
         else AccessibilityNodeInfo.AccessibilityAction.ACTION_SCROLL_UP.id
     }
     val fallback = if (forward) AccessibilityNodeInfo.ACTION_SCROLL_FORWARD else AccessibilityNodeInfo.ACTION_SCROLL_BACKWARD
-    val candidates = mutableListOf<Pair<AccessibilityNodeInfo, Long>>()
+    val candidates = mutableListOf<Pair<AccessibilityNodeInfo, Rect>>()
     val queue = java.util.ArrayDeque<AccessibilityNodeInfo>()
     queue.add(root)
     var visited = 0
@@ -382,13 +416,20 @@ class BlockerService : AccessibilityService(), SharedPreferences.OnSharedPrefere
         repeat(16) {
           ancestor?.let { ancestors.add(it.viewIdResourceName.orEmpty()); ancestor = it.parent }
         }
-        if (isPanelScrollTarget(ancestors)) { candidates.add(node to rectangle.width().toLong() * rectangle.height()) }
+        if (isPanelScrollTarget(ancestors)) { candidates.add(node to rectangle) }
       }
       for (index in 0 until node.childCount) { node.getChild(index)?.let { queue.add(it) } }
     }
-    for ((node, _) in candidates.sortedBy { it.second }) {
+    for ((node, rectangle) in candidates.sortedBy { it.second.width().toLong() * it.second.height() }) {
       val action = listOf(directional, fallback).firstOrNull { candidate -> node.actionList.any { it.id == candidate } }
-      if (action != null && node.performAction(action)) {
+      val arguments = Bundle()
+      if (Build.VERSION.SDK_INT >= 35) {
+        val distance = if (horizontal) kotlin.math.abs(endX - previousX) else kotlin.math.abs(endY - previousY)
+        val extent = if (horizontal) rectangle.width() else rectangle.height()
+        arguments.putFloat(AccessibilityNodeInfo.ACTION_ARGUMENT_SCROLL_AMOUNT_FLOAT,
+          panelScrollFraction(distance, extent))
+      }
+      if (action != null && node.performAction(action, arguments)) {
         trace("panel=scroll axis=${if (horizontal) "horizontal" else "vertical"} id=${node.viewIdResourceName.orEmpty().substringAfterLast('/')}")
         scheduleRefresh(16)
         return true
@@ -423,8 +464,12 @@ class BlockerService : AccessibilityService(), SharedPreferences.OnSharedPrefere
       return
     }
     val path = Path().apply { moveTo(x, y) }
+    replayGesture(path, 40)
+  }
+
+  private fun replayGesture(path: Path, duration: Long) {
     val tap = GestureDescription.Builder()
-      .addStroke(GestureDescription.StrokeDescription(path, 0, 40)).build()
+      .addStroke(GestureDescription.StrokeDescription(path, 0, duration)).build()
     replayingTap = true
     trace("tap=replay-start")
     setOverlaysTouchable(false)

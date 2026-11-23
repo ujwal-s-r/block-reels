@@ -4,6 +4,16 @@ import org.junit.Assert.assertEquals
 import org.junit.Test
 
 class BlockerRulesTest {
+  @Test fun panelScrollStepsFollowFingerDistanceInsteadOfAlwaysPaging() {
+    assertEquals(0.1f, panelScrollFraction(100f, 1000))
+    assertEquals(0.1f, panelScrollFraction(-100f, 1000))
+    assertEquals(0.05f, panelScrollFraction(1f, 1000))
+    assertEquals(1f, panelScrollFraction(2000f, 1000))
+    assertEquals(1f, panelScrollFraction(100f, 0))
+    assertEquals(true, isCarouselControl("com.instagram.android:id/clips_carousel_viewpager"))
+    assertEquals(false, isCarouselControl("com.instagram.android:id/clips_viewer_view_pager"))
+  }
+
   @Test fun siblingPanelListsAreAllowedButUnderlyingVideoPagersAreNot() {
     assertEquals(true, isPanelScrollTarget(listOf("recycler_view", "bottom_sheet_container")))
     assertEquals(true, isPanelScrollTarget(listOf("list", "likes_list")))
