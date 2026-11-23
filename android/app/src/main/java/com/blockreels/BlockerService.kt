@@ -267,7 +267,10 @@ class BlockerService : AccessibilityService(), SharedPreferences.OnSharedPrefere
               if (gesture.finish(event.rawX, event.rawY)) {
                 forwardTap(event.rawX, event.rawY)
               } else if (!cancelled && isHorizontalSwipe(event.rawX - startX, event.rawY - startY)) {
+                trace("horizontal=detected")
                 forwardHorizontalControl(startX, startY, event.rawX)
+              } else {
+                trace("horizontal=rejected cancelled=$cancelled")
               }
             }
           }
@@ -309,7 +312,7 @@ class BlockerService : AccessibilityService(), SharedPreferences.OnSharedPrefere
   }
 
   private fun forwardHorizontalControl(startX: Float, startY: Float, endX: Float) {
-    if (replayingTap || !running) { return }
+    if (replayingTap || !running) { trace("horizontal=busy replaying=$replayingTap running=$running"); return }
     val root = windows.firstOrNull {
       it.type == AccessibilityWindowInfo.TYPE_APPLICATION && (it.isFocused || it.isActive)
     }?.root ?: return
@@ -337,6 +340,7 @@ class BlockerService : AccessibilityService(), SharedPreferences.OnSharedPrefere
       }
       for (index in 0 until node.childCount) { node.getChild(index)?.let { queue.add(it) } }
     }
+    trace("horizontal=targets count=${controls.size} visited=$visited")
     for ((node, rectangle) in controls.sortedBy { it.second.width().toLong() * it.second.height() }) {
       val range = node.rangeInfo
       if (range != null && node.actionList.any { it.id == setProgress }) {
@@ -351,7 +355,11 @@ class BlockerService : AccessibilityService(), SharedPreferences.OnSharedPrefere
           else AccessibilityNodeInfo.AccessibilityAction.ACTION_SCROLL_LEFT.id
         val fallback = if (endX < startX) AccessibilityNodeInfo.ACTION_SCROLL_FORWARD else AccessibilityNodeInfo.ACTION_SCROLL_BACKWARD
         val action = listOf(directional, fallback).firstOrNull { candidate -> node.actionList.any { it.id == candidate } }
-        if (action != null && node.performAction(action)) { scheduleRefresh(16); return }
+        if (action != null && node.performAction(action)) {
+          trace("horizontal=action id=${node.viewIdResourceName.orEmpty().substringAfterLast('/')} action=$action")
+          scheduleRefresh(16)
+          return
+        }
         if (node.viewIdResourceName.orEmpty().substringAfterLast('/') == "clips_carousel_viewpager") {
           val inset = ViewConfiguration.get(this).scaledTouchSlop.toFloat()
           val left = rectangle.left + inset
@@ -361,7 +369,8 @@ class BlockerService : AccessibilityService(), SharedPreferences.OnSharedPrefere
               moveTo(startX.coerceIn(left, right), startY.coerceIn(rectangle.top + inset, rectangle.bottom - inset))
               lineTo(endX.coerceIn(left, right), startY.coerceIn(rectangle.top + inset, rectangle.bottom - inset))
             }
-            replayGesture(path, 160)
+            trace("horizontal=replay id=clips_carousel_viewpager distance=${kotlin.math.abs(endX.coerceIn(left, right) - startX.coerceIn(left, right))}")
+            replayGesture(path, 120, 50)
             return
           }
         }
@@ -403,16 +412,23 @@ class BlockerService : AccessibilityService(), SharedPreferences.OnSharedPrefere
     val tap = GestureDescription.Builder()
       .addStroke(stroke).build()
     replayingTap = true
-    trace("tap=replay-start")
+    trace("replay=start duration=$duration delay=$startDelay")
     setOverlaysTouchable(false)
     handler.postDelayed(restoreTouches, startDelay + duration + 600)
     val completion = object : GestureResultCallback() {
-      override fun onCompleted(gestureDescription: GestureDescription?) { finishReplay() }
-      override fun onCancelled(gestureDescription: GestureDescription?) { finishReplay() }
+      override fun onCompleted(gestureDescription: GestureDescription?) {
+        trace("replay=completed")
+        finishReplay()
+      }
+      override fun onCancelled(gestureDescription: GestureDescription?) {
+        trace("replay=cancelled")
+        finishReplay()
+      }
     }
     try {
-      if (!dispatchGesture(tap, completion, handler)) { finishReplay() }
-    } catch (_: Exception) {
+      if (!dispatchGesture(tap, completion, handler)) { trace("replay=refused"); finishReplay() }
+    } catch (exception: Exception) {
+      trace("replay=exception type=${exception.javaClass.simpleName}")
       finishReplay()
     }
   }
