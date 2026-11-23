@@ -12,6 +12,7 @@ import android.graphics.Path
 import android.graphics.PixelFormat
 import android.graphics.Rect
 import android.os.Build
+import android.os.Bundle
 import android.os.Handler
 import android.os.Looper
 import android.os.SystemClock
@@ -165,9 +166,18 @@ class BlockerService : AccessibilityService(), SharedPreferences.OnSharedPrefere
       if (BuildConfig.DEBUG) {
         val ids = nodes.filter { it.isVisibleToUser }.mapNotNull { it.viewIdResourceName }
           .map { it.substringAfterLast('/') }.distinct().filter { id ->
-            listOf("clip", "reel", "short", "sheet", "comment", "share", "story").any { id.contains(it) }
+            listOf("clip", "reel", "short", "sheet", "comment", "share", "story", "liker", "likes").any { id.contains(it) }
           }.take(40)
-        trace("render screen=$screen action=$action nodes=${nodes.size} window=${window.id} bounds=$bounds ids=$ids")
+        val lists = nodes.filter { node ->
+          node.isVisibleToUser && (node.isScrollable || listOf("RecyclerView", "ListView", "ScrollView")
+            .any { node.className?.toString()?.contains(it) == true })
+        }.take(12).map { node ->
+          val parents = mutableListOf<String>()
+          var parent = node.parent
+          repeat(8) { parent?.let { parents.add(it.viewIdResourceName.orEmpty().substringAfterLast('/')); parent = it.parent } }
+          "${node.viewIdResourceName.orEmpty().substringAfterLast('/')} scrollable=${node.isScrollable} actions=${node.actionList.map { it.id }} parents=$parents"
+        }
+        trace("render screen=$screen action=$action nodes=${nodes.size} window=${window.id} bounds=$bounds ids=$ids lists=$lists")
       }
       pendingDmClick = false
       val tab = if (packageName == INSTAGRAM) "reels" else "shorts"
@@ -247,7 +257,10 @@ class BlockerService : AccessibilityService(), SharedPreferences.OnSharedPrefere
               if (gesture.finish(event.rawX, event.rawY)) {
                 forwardTap(event.rawX, event.rawY)
               } else if (!cancelled) {
-                forwardPanelScroll(startX, startY, event.rawX, event.rawY)
+                val panelHandled = forwardPanelScroll(startX, startY, event.rawX, event.rawY)
+                if (!panelHandled && isHorizontalSwipe(event.rawX - startX, event.rawY - startY)) {
+                  forwardHorizontalControl(startX, startY, event.rawX)
+                }
               }
             }
           }
@@ -288,40 +301,100 @@ class BlockerService : AccessibilityService(), SharedPreferences.OnSharedPrefere
     addOverlay(frame, bounds)
   }
 
-  private fun forwardPanelScroll(startX: Float, startY: Float, endX: Float, endY: Float) {
-    val deltaY = endY - startY
-    if (replayingTap || !running || kotlin.math.abs(deltaY) <= kotlin.math.abs(endX - startX)) { return }
+  private fun forwardHorizontalControl(startX: Float, startY: Float, endX: Float) {
+    if (replayingTap || !running) { return }
     val root = windows.firstOrNull {
       it.type == AccessibilityWindowInfo.TYPE_APPLICATION && (it.isFocused || it.isActive)
     }?.root ?: return
     if (root.packageName?.toString() !in targets) { return }
+    val controls = mutableListOf<Pair<AccessibilityNodeInfo, Rect>>()
     val queue = java.util.ArrayDeque<AccessibilityNodeInfo>()
     queue.add(root)
     var visited = 0
-    val scrollAction = if (deltaY < 0) AccessibilityNodeInfo.ACTION_SCROLL_FORWARD else AccessibilityNodeInfo.ACTION_SCROLL_BACKWARD
+    val setProgress = AccessibilityNodeInfo.AccessibilityAction.ACTION_SET_PROGRESS.id
     while (queue.isNotEmpty() && visited++ < 400) {
       val node = queue.removeFirst()
       val rectangle = Rect()
       node.getBoundsInScreen(rectangle)
-      if (node.isVisibleToUser && rectangle.contains(startX.toInt(), startY.toInt()) &&
-        hasViewerPanel(listOf(node.viewIdResourceName.orEmpty().lowercase(Locale.ROOT)))) {
-        val panel = java.util.ArrayDeque<AccessibilityNodeInfo>()
-        panel.add(node)
-        while (panel.isNotEmpty() && visited++ < 400) {
-          val child = panel.removeFirst()
-          val childBounds = Rect()
-          child.getBoundsInScreen(childBounds)
-          if (child.isVisibleToUser && child.isEnabled && child.isScrollable && rectangle.contains(childBounds) &&
-            childBounds.contains(startX.toInt(), startY.toInt()) &&
-            child.actionList.any { it.id == scrollAction } && child.performAction(scrollAction)) {
-            scheduleRefresh(16)
-            return
-          }
-          for (index in 0 until child.childCount) { child.getChild(index)?.let { panel.add(it) } }
-        }
+      val seekable = node.rangeInfo != null && node.actionList.any { it.id == setProgress }
+      val horizontalActions = node.actionList.any {
+        it.id == AccessibilityNodeInfo.AccessibilityAction.ACTION_SCROLL_LEFT.id ||
+          it.id == AccessibilityNodeInfo.AccessibilityAction.ACTION_SCROLL_RIGHT.id
+      }
+      val hitBounds = Rect(rectangle)
+      if (seekable) { hitBounds.inset(0, -ViewConfiguration.get(this).scaledTouchSlop * 2) }
+      if (node.isVisibleToUser && node.isEnabled && !rectangle.isEmpty &&
+        hitBounds.contains(startX.toInt(), startY.toInt()) &&
+        (seekable || isCarouselControl(node.viewIdResourceName.orEmpty(), horizontalActions))) {
+        controls.add(node to rectangle)
       }
       for (index in 0 until node.childCount) { node.getChild(index)?.let { queue.add(it) } }
     }
+    for ((node, rectangle) in controls.sortedBy { it.second.width().toLong() * it.second.height() }) {
+      val range = node.rangeInfo
+      if (range != null && node.actionList.any { it.id == setProgress }) {
+        val fraction = seekFraction(endX, rectangle.left.toFloat(), rectangle.width().toFloat(),
+          resources.configuration.layoutDirection == View.LAYOUT_DIRECTION_RTL)
+        val arguments = Bundle().apply {
+          putFloat(AccessibilityNodeInfo.ACTION_ARGUMENT_PROGRESS_VALUE, range.min + fraction * (range.max - range.min))
+        }
+        if (node.performAction(setProgress, arguments)) { scheduleRefresh(16); return }
+      } else {
+        val directional = if (endX < startX) AccessibilityNodeInfo.AccessibilityAction.ACTION_SCROLL_RIGHT.id
+          else AccessibilityNodeInfo.AccessibilityAction.ACTION_SCROLL_LEFT.id
+        val fallback = if (endX < startX) AccessibilityNodeInfo.ACTION_SCROLL_FORWARD else AccessibilityNodeInfo.ACTION_SCROLL_BACKWARD
+        val action = listOf(directional, fallback).firstOrNull { candidate -> node.actionList.any { it.id == candidate } }
+        if (action != null && node.performAction(action)) { scheduleRefresh(16); return }
+      }
+    }
+    trace("horizontal=no-supported-control")
+  }
+
+  private fun forwardPanelScroll(startX: Float, startY: Float, endX: Float, endY: Float): Boolean {
+    if (replayingTap || !running) { return false }
+    val root = windows.firstOrNull {
+      it.type == AccessibilityWindowInfo.TYPE_APPLICATION && (it.isFocused || it.isActive)
+    }?.root ?: return false
+    if (root.packageName?.toString() !in targets) { return false }
+    val horizontal = isHorizontalSwipe(endX - startX, endY - startY)
+    val forward = if (horizontal) endX < startX else endY < startY
+    val directional = if (horizontal) {
+      if (forward) AccessibilityNodeInfo.AccessibilityAction.ACTION_SCROLL_RIGHT.id
+        else AccessibilityNodeInfo.AccessibilityAction.ACTION_SCROLL_LEFT.id
+    } else {
+      if (forward) AccessibilityNodeInfo.AccessibilityAction.ACTION_SCROLL_DOWN.id
+        else AccessibilityNodeInfo.AccessibilityAction.ACTION_SCROLL_UP.id
+    }
+    val fallback = if (forward) AccessibilityNodeInfo.ACTION_SCROLL_FORWARD else AccessibilityNodeInfo.ACTION_SCROLL_BACKWARD
+    val candidates = mutableListOf<Pair<AccessibilityNodeInfo, Long>>()
+    val queue = java.util.ArrayDeque<AccessibilityNodeInfo>()
+    queue.add(root)
+    var visited = 0
+    while (queue.isNotEmpty() && visited++ < 400) {
+      val node = queue.removeFirst()
+      val rectangle = Rect()
+      node.getBoundsInScreen(rectangle)
+      if (node.isVisibleToUser && node.isEnabled && node.isScrollable &&
+        rectangle.contains(startX.toInt(), startY.toInt())) {
+        val ancestors = mutableListOf<String>()
+        var ancestor: AccessibilityNodeInfo? = node
+        repeat(16) {
+          ancestor?.let { ancestors.add(it.viewIdResourceName.orEmpty()); ancestor = it.parent }
+        }
+        if (isPanelScrollTarget(ancestors)) { candidates.add(node to rectangle.width().toLong() * rectangle.height()) }
+      }
+      for (index in 0 until node.childCount) { node.getChild(index)?.let { queue.add(it) } }
+    }
+    for ((node, _) in candidates.sortedBy { it.second }) {
+      val action = listOf(directional, fallback).firstOrNull { candidate -> node.actionList.any { it.id == candidate } }
+      if (action != null && node.performAction(action)) {
+        trace("panel=scroll axis=${if (horizontal) "horizontal" else "vertical"} id=${node.viewIdResourceName.orEmpty().substringAfterLast('/')}")
+        scheduleRefresh(16)
+        return true
+      }
+    }
+    trace("panel=no-scroll-target axis=${if (horizontal) "horizontal" else "vertical"}")
+    return false
   }
 
   private fun forwardTap(x: Float, y: Float) {

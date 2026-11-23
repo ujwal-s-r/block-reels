@@ -11,8 +11,33 @@ internal fun matchesVideoTab(label: String, viewId: String, tab: String): Boolea
 
 internal fun hasViewerPanel(ids: List<String>): Boolean = ids.any { id ->
   listOf("comment_list", "comments_recycler", "comment_thread", "comments_sheet", "comment_sheet",
-    "share_sheet", "direct_share_sheet", "clips_share_sheet", "reel_share_sheet", "save_to_collection")
+    "share_sheet", "direct_share_sheet", "clips_share_sheet", "reel_share_sheet", "save_to_collection",
+    "likers_list", "likes_list", "likers_recycler", "likes_recycler", "likers_sheet", "likes_sheet", "media_likers")
     .any { id.contains(it) }
+}
+
+internal fun isCarouselControl(viewId: String, hasHorizontalActions: Boolean = false): Boolean {
+  val id = viewId.substringAfterLast('/').lowercase(Locale.ROOT)
+  return !id.startsWith("clips_viewer") && !id.contains("reel_recycler") &&
+    (hasHorizontalActions || listOf("carousel", "sidecar", "media_pager").any { id.contains(it) })
+}
+
+internal fun isHorizontalSwipe(deltaX: Float, deltaY: Float): Boolean =
+  kotlin.math.abs(deltaX) > kotlin.math.abs(deltaY) * 2
+
+internal fun isPanelScrollTarget(ancestorIds: List<String>): Boolean {
+  for (viewId in ancestorIds) {
+    val id = viewId.substringAfterLast('/').lowercase(Locale.ROOT)
+    if (id.startsWith("clips_viewer") || id.contains("reel_recycler") ||
+      id.startsWith("swipeable_tab_view_pager") || id.startsWith("swipeable_nav_view_pager")) { return false }
+    if (id == "bottom_sheet_container" || hasViewerPanel(listOf(id))) { return true }
+  }
+  return false
+}
+
+internal fun seekFraction(x: Float, left: Float, width: Float, rtl: Boolean): Float {
+  val fraction = ((x - left) / width.coerceAtLeast(1f)).coerceIn(0f, 1f)
+  return if (rtl) 1f - fraction else fraction
 }
 
 internal fun detectVideoScreen(packageName: String, ids: List<String>, hasMessageInput: Boolean): VideoScreen {

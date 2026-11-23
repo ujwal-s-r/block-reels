@@ -4,6 +4,51 @@ import org.junit.Assert.assertEquals
 import org.junit.Test
 
 class BlockerRulesTest {
+  @Test fun siblingPanelListsAreAllowedButUnderlyingVideoPagersAreNot() {
+    assertEquals(true, isPanelScrollTarget(listOf("recycler_view", "bottom_sheet_container")))
+    assertEquals(true, isPanelScrollTarget(listOf("list", "likes_list")))
+    assertEquals(true, isPanelScrollTarget(listOf("recipients_row", "bottom_sheet_container", "clips_viewer_root")))
+    assertEquals(false, isPanelScrollTarget(listOf("clips_viewer_view_pager", "bottom_sheet_container")))
+    assertEquals(false, isPanelScrollTarget(listOf("recycler_view", "clips_viewer_root", "bottom_sheet_container")))
+    assertEquals(false, isPanelScrollTarget(listOf("reel_recycler", "bottom_sheet_container")))
+    assertEquals(false, isPanelScrollTarget(listOf("list", "swipeable_tab_view_pager", "bottom_sheet_container")))
+    assertEquals(false, isPanelScrollTarget(listOf("recycler_view", "content")))
+  }
+
+  @Test fun horizontalControlsNeverIncludeTheVerticalReelPager() {
+    assertEquals(true, isCarouselControl("com.instagram.android:id/carousel_media_pager"))
+    assertEquals(true, isCarouselControl("sidecar_view_pager"))
+    assertEquals(false, isCarouselControl("clips_viewer_view_pager"))
+    assertEquals(false, isCarouselControl("clips_viewer_carousel"))
+    assertEquals(false, isCarouselControl("reel_recycler"))
+    assertEquals(true, isCarouselControl("", true))
+    assertEquals(false, isCarouselControl("", false))
+    assertEquals(false, isCarouselControl("clips_viewer_view_pager", true))
+    assertEquals(true, isHorizontalSwipe(100f, 5f))
+    assertEquals(true, isHorizontalSwipe(-100f, 5f))
+    assertEquals(false, isHorizontalSwipe(5f, -100f))
+    assertEquals(false, isHorizontalSwipe(100f, 90f))
+  }
+
+  @Test fun timelineSeekingClampsToTheControlAndSupportsRtl() {
+    assertEquals(0.5f, seekFraction(150f, 100f, 100f, false))
+    assertEquals(0f, seekFraction(0f, 100f, 100f, false))
+    assertEquals(1f, seekFraction(300f, 100f, 100f, false))
+    assertEquals(0.75f, seekFraction(125f, 100f, 100f, true))
+  }
+
+  @Test fun likesPanelsScrollWithoutReleasingViewerProtection() {
+    val rules = BlockerRules()
+    rules.evaluate(VideoScreen.REEL, false, 0, BlockerOptions())
+    for (panel in listOf("likers_list", "likes_recycler", "media_likers_list", "likes_sheet")) {
+      assertEquals(true, hasViewerPanel(listOf(panel)))
+      val screen = detectVideoScreen("com.instagram.android", listOf(panel), false)
+      assertEquals(VideoScreen.PANEL, screen)
+      assertEquals(ViewerAction.LOCK, rules.evaluate(screen, false, 1, BlockerOptions()))
+    }
+    assertEquals(false, hasViewerPanel(listOf("like_button", "like_count")))
+  }
+
   @Test fun recordedCommentAndShareAnimationsNeverReleaseReelProtection() {
     val rules = BlockerRules()
     val snapshots = listOf(
