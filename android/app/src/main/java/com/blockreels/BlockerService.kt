@@ -21,6 +21,7 @@ import android.view.Gravity
 import android.view.MotionEvent
 import android.view.View
 import android.view.ViewConfiguration
+import android.view.WindowInsets
 import android.view.WindowManager
 import android.view.accessibility.AccessibilityEvent
 import android.view.accessibility.AccessibilityNodeInfo
@@ -467,6 +468,11 @@ class BlockerService : AccessibilityService(), SharedPreferences.OnSharedPrefere
       gravity = Gravity.TOP or Gravity.LEFT
       x = bounds.left
       y = bounds.top
+      softInputMode = WindowManager.LayoutParams.SOFT_INPUT_ADJUST_RESIZE
+      if (Build.VERSION.SDK_INT >= 30) {
+        setFitInsetsTypes(WindowInsets.Type.ime())
+        setFitInsetsIgnoringVisibility(false)
+      }
     }
     getSystemService(WindowManager::class.java).addView(view, parameters)
     overlays.add(view)
